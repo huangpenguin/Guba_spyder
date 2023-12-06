@@ -7,6 +7,7 @@ import time
 import re
 import random
 from multiprocessing.dummy import Pool,Lock
+import os
 
 def get_content_guba(url,visited_urls):
     '''
@@ -89,14 +90,16 @@ def process_gbk(content):
 
 def get_list(file):
     '''
-    去掉无法识别的字符
-    :param content: 获取股票代码并处理成唯一值
+    获取股票代码并处理成唯一值,同时去掉已经收集的股票代码
+    :param file: Excel 文件路径
     :return: 股票代码列表
     '''
-    # 读取 Excel 文件
-    excel_file = pd.ExcelFile(file)
+    # 获取上一级目录中 comments 文件夹下的所有 Excel 文件的名字
+    comments_folder = os.path.join(os.path.dirname(file), 'comments')
+    excel_files = [f for f in os.listdir(comments_folder) if f.endswith('.xlsx')]
 
     # 获取 'POP_up 400' 工作表的第二列数据
+    excel_file = pd.ExcelFile(file)
     pop_up_sheet = excel_file.parse('POP_up 400')
     pop_up_codes = pop_up_sheet.iloc[:, 1].astype(str).str.zfill(6).tolist()
 
@@ -106,9 +109,13 @@ def get_list(file):
 
     # 合并两个工作表的代码列
     code = pop_up_codes + pettm_up_codes
-    # 使用集合去除重复元素
-    unique_codes = list(set(code))
-    return unique_codes
+
+    # 去除已存在的股票代码
+    for excel_file_name in excel_files:
+        existing_codes = pd.ExcelFile(os.path.join(comments_folder, excel_file_name)).parse().iloc[:, 0].astype(str).tolist()
+        code = list(set(code) - set(existing_codes))
+
+    return code
 
 def check_dejavu(url,visited_urls):
     """
@@ -133,10 +140,6 @@ def check_dejavu(url,visited_urls):
 
     visited_urls.add(current_url)  # 将当前页面加入已访问集合
     return current_url
-
-
-
-
 
 def start_spyder(codes):
     '''
