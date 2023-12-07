@@ -8,6 +8,7 @@ import re
 import random
 from multiprocessing.dummy import Pool,Lock
 import os
+from selenium.common.exceptions import WebDriverException
 
 def get_content_guba(url,visited_urls):
     '''
@@ -21,9 +22,16 @@ def get_content_guba(url,visited_urls):
     if current_url is None:
         return None
 
-    bro.get(url)  # 打开页面
-    response = bro.page_source
-    tree = etree.HTML(response)
+    retry_successful = get_with_retry(bro, url)
+    if retry_successful:
+        # 执行后续操作
+        response = bro.page_source
+        tree = etree.HTML(response)
+    # 其他代码...
+    else:
+        # 重试失败，可能需要进行其他处理
+        print("Failed to get the page even after retries.")
+        return None
     try:
         try:
             time = tree.xpath('//*[@id="newscontent"]/div[2]/div[2]/div/div[2]')[0]
@@ -54,9 +62,17 @@ def get_content_caifuhao(url,visited_urls):
     if current_url is None:
         return None
 
-    bro.get(url)  # 打开页面
-    response = bro.page_source
-    tree = etree.HTML(response)
+    retry_successful = get_with_retry(bro, url)
+    if retry_successful:
+        # 执行后续操作
+        response = bro.page_source
+        tree = etree.HTML(response)
+    # 其他代码...
+    else:
+        # 重试失败，可能需要进行其他处理
+        print("Failed to get the page even after retries.")
+        return None
+
     try:
         time = tree.xpath('//*[@id="main"]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/span[2]/text()')[0]
     except:
@@ -88,18 +104,17 @@ def process_gbk(content):
         '', content)
     return content
 
+
 def get_list(file):
     '''
-    获取股票代码并处理成唯一值,同时去掉已经收集的股票代码
-    :param file: Excel 文件路径
+    获取股票代码并处理成唯一值
+    :param content: Excel文件路径
     :return: 股票代码列表
     '''
-    # 获取上一级目录中 comments 文件夹下的所有 Excel 文件的名字
-    comments_folder = os.path.join(os.path.dirname(file), 'comments')
-    excel_files = [f for f in os.listdir(comments_folder) if f.endswith('.xlsx')]
+    # 读取 Excel 文件
+    excel_file = pd.ExcelFile(file)
 
     # 获取 'POP_up 400' 工作表的第二列数据
-    excel_file = pd.ExcelFile(file)
     pop_up_sheet = excel_file.parse('POP_up 400')
     pop_up_codes = pop_up_sheet.iloc[:, 1].astype(str).str.zfill(6).tolist()
 
@@ -110,12 +125,15 @@ def get_list(file):
     # 合并两个工作表的代码列
     code = pop_up_codes + pettm_up_codes
 
-    # 去除已存在的股票代码
-    for excel_file_name in excel_files:
-        existing_codes = pd.ExcelFile(os.path.join(comments_folder, excel_file_name)).parse().iloc[:, 0].astype(str).tolist()
-        code = list(set(code) - set(existing_codes))
+    # 使用集合去除重复元素
+    unique_codes = list(set(code))
 
-    return code
+    # 获取上一级路径下 comments 文件夹中所有文件的名字
+    comments_folder = os.path.join(os.path.dirname(os.path.dirname(file)), 'comments')
+    existing_codes = os.listdir(comments_folder)
+    # 去重并过滤掉已存在的股票代码
+    unique_codes = list(set(unique_codes) - set(existing_codes))
+    return unique_codes
 
 def check_dejavu(url,visited_urls):
     """
@@ -130,8 +148,15 @@ def check_dejavu(url,visited_urls):
         return None  # 返回None表示不需要继续处理
 
     # 进行重定向处理
-    bro.get(url)
-    current_url = bro.current_url
+    retry_successful = get_with_retry(bro, url)
+    if retry_successful:
+        # 执行后续操作
+        current_url = bro.current_url
+    # 其他代码...
+    else:
+        # 重试失败，可能需要进行其他处理
+        print("Failed to get the page even after retries.")
+        return None
 
     # 检查重定向后的页面是否已经访问过
     if current_url in visited_urls:
@@ -140,6 +165,25 @@ def check_dejavu(url,visited_urls):
 
     visited_urls.add(current_url)  # 将当前页面加入已访问集合
     return current_url
+
+def get_with_retry(driver, url, max_retries=3, wait_time=2):
+    """
+     带重试功能的get方法
+     :param url: 待访问地址
+     :param visited_urls: driver实例化后的chorome
+     :return:
+     """
+    for _ in range(max_retries):
+        try:
+            driver.get(url)
+            return True  # 如果成功获取页面，直接返回
+        except WebDriverException as e:
+            print(f"Error during get({url}): {e}")
+            print("Retrying...")
+            time.sleep(wait_time)
+
+    print(f"Failed to get({url}) after {max_retries} retries.")
+    return False
 
 def start_spyder(codes):
     '''
@@ -156,23 +200,38 @@ def start_spyder(codes):
         writer = csv.DictWriter(csvf, fieldnames=fieldnames)
         writer.writeheader()
         url = f'http://guba.eastmoney.com/list,{code},99.html'
-        bro.get(url)  # 打开页面
-        response = bro.page_source
-        tree = etree.HTML(response)
+
+        retry_successful = get_with_retry(bro, url)
+        if retry_successful:
+        # 执行后续操作
+            response = bro.page_source
+            tree = etree.HTML(response)
+        # 其他代码...
+        else:
+        # 重试失败，可能需要进行其他处理
+            print("Failed to get the page even after retries.")
+            continue#处理方法存疑
+
         try:
             page_num = tree.xpath('//*[@id="mainlist"]/div/ul/li[1]/ul/li[position() = last() - 1]/a/span/text()')[0]#使用XPath的last()函数来选择最后一个li元素
         except:
-            print(url)
             continue
+
         for i in range(1, int(page_num) + 1):
             page_url = f'http://guba.eastmoney.com/list,{code},99_{i}.html'
             #time.sleep(random.uniform(1, 5))
             current_url = check_dejavu(page_url, visited_urls)
             if current_url is None:
                 continue
-            bro.get(page_url)  # 打开页面
-            page_response = bro.page_source
-            tree = etree.HTML(page_response)
+            retry_successful = get_with_retry(bro, page_url)
+            if retry_successful:
+                # 执行后续操作
+                response = bro.page_source
+                tree = etree.HTML(response)
+            else:
+                # 重试失败，可能需要进行其他处理
+                print("Failed to get the page even after retries.")
+                continue  # 处理方法存疑
             for n in range(1, 80):  # 每一页顶多80个帖子
                 try:
                     title_element = tree.xpath(f'//*[@id="mainlist"]/div/ul/li[1]/table/tbody/tr[{n}]/td[3]/div/a')[0]  # tr表示行  td表示列
@@ -258,7 +317,7 @@ if __name__ == '__main__':
     bro = webdriver.Chrome(
         executable_path=r'E:\guba_spider-main\chromedriver-win64\chromedriver-win64\chromedriver.exe',
         options=chrome_options)
-    codes =get_list('stock_num.xlsx')
+    codes =get_list('E:\guba_spider-main\guba_spider-main\stock_num.xlsx')
     pool = Pool(8)  # 进程开多了跑久了selenium会报Timeout错误（我开8个和6个就报错了）
     pool.map(start_spyder, [codes])
     pool.close()
