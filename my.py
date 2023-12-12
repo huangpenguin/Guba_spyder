@@ -181,7 +181,7 @@ def get_with_retry(driver, url, max_retries=3, wait_time=2):
             print(f"Error during get({url}): {e}")
             print("Retrying...")
             time.sleep(wait_time)
-
+            
     print(f"Failed to get({url}) after {max_retries} retries.")
     return False
 
